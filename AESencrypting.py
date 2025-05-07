@@ -19,33 +19,53 @@ def unpad(data):
 
 # === Eigene AES-Implementierungen (ECB/CBC) ===
 def aes_ecb_encrypt(key, plaintext):
-    # Initialisiert einen AES-Cipher im ECB-Modus mit dem gegebenen Schlüssel
     cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=default_backend())
     encryptor = cipher.encryptor()
-    # Padde den Klartext und verschlüssele ihn
     return encryptor.update(pad(plaintext)) + encryptor.finalize()
 
 def aes_ecb_decrypt(key, ciphertext):
-    # Initialisiert einen AES-Cipher im ECB-Modus zum Entschlüsseln
     cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=default_backend())
     decryptor = cipher.decryptor()
-    # Entschlüssele den Ciphertext und entferne das Padding
     return unpad(decryptor.update(ciphertext) + decryptor.finalize())
 
 def aes_cbc_encrypt(key, iv, plaintext):
-    # Initialisiert einen AES-Cipher im CBC-Modus mit Schlüssel und IV
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
     encryptor = cipher.encryptor()
-    # Padde den Klartext und verschlüssele ihn im CBC-Modus
     return encryptor.update(pad(plaintext)) + encryptor.finalize()
 
 def aes_cbc_decrypt(key, iv, ciphertext):
-    # Initialisiert einen AES-Cipher im CBC-Modus zum Entschlüsseln mit IV
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
     decryptor = cipher.decryptor()
-    # Entschlüssele den Ciphertext und entferne das Padding
     return unpad(decryptor.update(ciphertext) + decryptor.finalize())
 
+# === Erweiterte Modi: OFB, CTR, CFB ===
+def aes_ofb_encrypt(key, iv, plaintext):
+    # Initialisiert AES im OFB-Modus (Output Feedback Mode)
+    cipher = Cipher(algorithms.AES(key), modes.OFB(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    # Verschluesselt den Klartext im Strommodus (kein Padding noetig)
+    return encryptor.update(plaintext) + encryptor.finalize()
+
+def aes_ctr_encrypt(key, nonce, plaintext):
+    # Initialisiert AES im CTR-Modus (Counter Mode) mit einem Zaehler (Nonce)
+    cipher = Cipher(algorithms.AES(key), modes.CTR(nonce), backend=default_backend())
+    encryptor = cipher.encryptor()
+    # Verschluesselt den Klartext blockweise, aber unabhaengig (parallelisierbar, kein Padding noetig)
+    return encryptor.update(plaintext) + encryptor.finalize()
+
+def aes_cfb_encrypt(key, iv, plaintext, segment_size=128):
+    # Initialisiert AES im CFB-Modus mit waehlbarer Segmentgroesse
+    # 128 Bit: Standardblockgroesse, 8 Bit: Byteweises Feedback
+    if segment_size == 128:
+        mode = modes.CFB(iv)
+    elif segment_size == 8:
+        mode = modes.CFB8(iv)
+    else:
+        raise ValueError("Nur 8 oder 128 Bit Segmentgroesse werden unterstuetzt.")
+    cipher = Cipher(algorithms.AES(key), mode, backend=default_backend())
+    encryptor = cipher.encryptor()
+    # Verschluesselt den Klartext segmentweise (kein Padding noetig)
+    return encryptor.update(plaintext) + encryptor.finalize()
 
 # === Fehlerausbreitung bei CBC testen ===
 def test_cbc_error_propagation():
@@ -109,6 +129,52 @@ def benchmark_encryptions():
     ]
     print(tabulate(table, headers=["Modus", "Quelle", "Zeit"]))
 
+# === Benchmark für OFB, CTR, CFB (eigene Implementierungen) ===
+def benchmark_stream_modes():
+    key = os.urandom(16)
+    iv = os.urandom(16)
+    nonce = os.urandom(16)
+    data = os.urandom(1024 * 100)
+
+    results = []
+
+    # OFB
+    start = time.time()
+    aes_ofb_encrypt(key, iv, data)
+    results.append(["OFB", "eigene Implementierung", f"{time.time() - start:.5f} s"])
+
+    # CTR
+    start = time.time()
+    aes_ctr_encrypt(key, nonce, data)
+    results.append(["CTR", "eigene Implementierung", f"{time.time() - start:.5f} s"])
+
+    # CFB 128 Bit
+    start = time.time()
+    aes_cfb_encrypt(key, iv, data, segment_size=128)
+    results.append(["CFB (128-bit)", "eigene Implementierung", f"{time.time() - start:.5f} s"])
+
+    # CFB 8 Bit
+    start = time.time()
+    aes_cfb_encrypt(key, iv, data, segment_size=8)
+    results.append(["CFB (8-bit)", "eigene Implementierung", f"{time.time() - start:.5f} s"])
+
+    print(tabulate(results, headers=["Modus", "Quelle", "Zeit"]))
+
+# === Vergleich CFB 8 Bit vs. 128 Bit ===
+def compare_cfb_segment_sizes():
+    key = os.urandom(16)
+    iv = os.urandom(16)
+    data = os.urandom(1024 * 100)
+
+    results = []
+    for bits in [8, 128]:
+        start = time.time()
+        aes_cfb_encrypt(key, iv, data, segment_size=bits)
+        elapsed = time.time() - start
+        results.append([f"CFB mit {bits} Bit", f"{elapsed:.5f} s"])
+
+    print(tabulate(results, headers=["Variante", "Zeit"]))
+
 # === Hauptprogramm ===
 if __name__ == "__main__":
     print("=== Fehlerausbreitung in CBC (Bitflip im Ciphertext) ===")
@@ -116,3 +182,9 @@ if __name__ == "__main__":
 
     print("\n=== Zeitvergleich von ECB und CBC (eigene Implementierung vs. Library) ===")
     benchmark_encryptions()
+
+    print("\n=== Zeitvergleich der Modi OFB, CTR, CFB ===")
+    benchmark_stream_modes()
+
+    print("\n=== Vergleich der Segmentgrößen im CFB-Modus ===")
+    compare_cfb_segment_sizes()
